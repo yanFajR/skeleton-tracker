@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="id">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#f4f7fb" />
+    <title>Motion Tracker</title>
+    <link
+      rel="stylesheet"
+      href="{{ url_for('static', path='css/style.css') }}?v=14"
+    />
+  </head>
+  <body>
+    <main class="container">
+      <div class="landing-grid">
+        <header class="page-header">
+          <div class="brand-row">
+            <p class="app-name">Motion Tracker</p>
+            <span class="brand-divider" aria-hidden="true"></span>
+            <p class="brand-description">Analisis gerakan</p>
+          </div>
+          <p class="intro">
+            Pilih bagian video yang ingin ditinjau sebelum analisis gerakan.
+          </p>
+        </header>
+
+        <section
+          id="session-workflow"
+          class="card session-card"
+          data-min-trim-duration="{{ min_trim_duration_seconds }}"
+          data-max-trim-duration="{{ max_trim_duration_seconds }}"
+          aria-labelledby="session-title"
+        >
+          <div class="section-heading">
+            <span class="step-number">01</span>
+            <div>
+              <p class="eyebrow">ANALISIS VIDEO</p>
+              <h2 id="session-title">Pilih rekaman smash</h2>
+            </div>
+          </div>
+          <p class="section-copy">
+            Unggah satu video, tinjau rekamannya, lalu pilih bagian yang ingin dianalisis.
+          </p>
+          <form id="session-upload-form">
+            <label class="file-picker" for="session-video-file">
+              <span class="picker-icon" aria-hidden="true">↑</span>
+              <span class="picker-title">Pilih video smash</span>
+              <span class="picker-hint">MP4, MOV, atau WebM · Maks. 200 MB</span>
+              <input
+                id="session-video-file"
+                name="video"
+                type="file"
+                accept="video/mp4,video/quicktime,video/webm,.mp4,.mov,.webm"
+                required
+              />
+            </label>
+            <p id="session-selected-file" class="hint">Belum ada file dipilih.</p>
+            <button id="session-upload-button" type="submit">Unggah video</button>
+          </form>
+
+          <div id="session-editor" hidden>
+            <div class="session-preview">
+              <video id="session-preview-video" controls preload="metadata"></video>
+            </div>
+            <div class="preview-details">
+              <span>Durasi video sumber</span>
+              <strong id="session-source-duration">00:00.000</strong>
+            </div>
+            <form id="session-trim-form" novalidate>
+              <div class="trim-heading">
+                <h3>Bagian video</h3>
+                <span>Durasi pilihan: <strong id="trim-selected-duration">00:00.000</strong></span>
+              </div>
+              <label class="field-label" for="trim-start-time">Mulai <output id="trim-start-display">00:00.000</output></label>
+              <div class="trim-time-row">
+                <input id="trim-start-time" type="number" step="0.001" min="0" value="0" />
+                <span class="trim-time-label">detik</span>
+                <input id="trim-start-range" type="range" min="0" max="0" step="0.001" value="0" aria-label="Waktu mulai" />
+              </div>
+              <label class="field-label" for="trim-end-time">Selesai <output id="trim-end-display">00:00.000</output></label>
+              <div class="trim-time-row">
+                <input id="trim-end-time" type="number" step="0.001" min="0" value="0" />
+                <span class="trim-time-label">detik</span>
+                <input id="trim-end-range" type="range" min="0" max="0" step="0.001" value="0" aria-label="Waktu selesai" />
+              </div>
+              <p id="trim-range-error" class="inline-status note-error" role="status" aria-live="polite"></p>
+              <button id="trim-submit-button" type="submit" disabled>Gunakan Video Ini</button>
+            </form>
+            <div id="trim-processing-status" class="processing-status" role="status" aria-live="polite" hidden>
+              <progress aria-label="Memotong dan menganalisis video"></progress>
+              <p id="trim-processing-message">Menyiapkan video…</p>
+            </div>
+            <p id="session-status" class="status" role="status" aria-live="polite"></p>
+            <div id="session-result" class="session-preview result-preview" hidden></div>
+            <p id="session-result-loading" class="result-loading" role="status" aria-live="polite" hidden>Memuat video hasil…</p>
+            <div id="session-review-controls" class="review-controls" hidden>
+              <button id="session-frame-prev" class="review-button" type="button" aria-label="Frame sebelumnya">← Frame</button>
+              <button id="session-play-toggle" class="review-button" type="button">Putar</button>
+              <button id="session-frame-next" class="review-button" type="button" aria-label="Frame berikutnya">Frame →</button>
+              <label for="session-playback-rate">
+                Kecepatan
+                <select id="session-playback-rate">
+                  <option value="0.1">0,1×</option>
+                  <option value="0.25">0,25×</option>
+                  <option value="0.5">0,5×</option>
+                  <option value="0.75">0,75×</option>
+                  <option value="1" selected>1,0×</option>
+                </select>
+              </label>
+              <span id="session-frame-status" class="frame-status" aria-live="polite">Frame 0</span>
+            </div>
+            <div id="session-measurements" class="measurements" hidden>
+              <div class="measurements-heading">
+                <h4>Sudut siku <span class="unit-label">(°)</span></h4>
+                <span id="session-angle-time" class="frame-time">Sudut frame terpilih</span>
+              </div>
+              <dl>
+                <div>
+                  <dt>Kiri</dt>
+                  <dd id="session-left-angle">Tidak tersedia</dd>
+                </div>
+                <div>
+                  <dt>Kanan</dt>
+                  <dd id="session-right-angle">Tidak tersedia</dd>
+                </div>
+              </dl>
+            </div>
+            <div id="session-trunk-measurement" class="measurements trunk-measurement" hidden>
+              <div class="measurements-heading">
+                <h4>Batang tubuh</h4>
+                <span class="unit-label">Simpangan dari vertikal (°)</span>
+              </div>
+              <dl>
+                <div>
+                  <dt>Sudut batang tubuh</dt>
+                  <dd id="session-trunk-angle">Tidak tersedia</dd>
+                </div>
+              </dl>
+            </div>
+            <button id="session-retry-analysis" class="button-secondary retry-button" type="button" hidden>
+              Analisis pose
+            </button>
+          </div>
+        </section>
+      </div>
+
+      <p class="footer-note">
+        Pengukuran 2D dipengaruhi sudut kamera dan keterlihatan pose. Motion
+        Tracker membantu meninjau gerakan, bukan menetapkan teknik benar atau
+        salah.
+      </p>
+    </main>
+    <script src="{{ url_for('static', path='js/session.js') }}?v=2"></script>
+  </body>
+</html>
