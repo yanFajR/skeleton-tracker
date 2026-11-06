@@ -4,15 +4,19 @@ Motion Tracker is a local web application for reviewing sports video. It overlay
 
 ## Current status
 
-**Phase B1 complete (single-session preview and trimming):** each session can upload one source video, preview it in the browser, choose a start/end range, create a new trimmed MP4, and run pose analysis against that trimmed file. Session pose analysis is rejected until trimming succeeds; the source video is never used as a fallback. Metadata ownership remains explicit: legacy uploads create comparison metadata only; session uploads and their trimmed files belong only to their session.
+**Single-session workflow:** each session uploads one source video, previews it, selects a start/end range, creates a new trimmed MP4, and runs pose analysis against that trimmed file. Pose analysis is rejected until trimming succeeds; the source video is never used as a fallback.
 
-**Phase 4 pipeline remains active:** uploaded videos can still be processed frame by frame with MediaPipe Pose Landmarker and viewed as an annotated MP4. The app continues to measure left and right elbow angles from the same pose inference and update the values as the result video is scrubbed.
+**Authentication:** a single local account protects every page, video, and API route. See [Login](#login).
 
-**Phase B2.2 implemented:** the B2.1 metadata contract is integrated with session trimming. FFmpeg decodes the source and trimmed output to collect per-frame PTS, stream properties, display rotation, and decoded frame count; session trim is marked successful only after technical validation passes. B2.3.2 subsequently adds validated CFR normalization to session trimming without changing the legacy comparison pipeline.
+**Fixed 30 FPS normalization (B2.3.2):** session trimming always encodes a CFR `30/1` MP4 and validates the output timing before saving. The provenance-aware `resolve_target_frame_rate` policy in `video_trimmer.py` remains a standalone, tested function; the trim endpoint does not call it.
 
-**Legacy comparison UI removed:** the baseline/retake workflow is no longer exposed by the web interface. Backend compatibility endpoints and historical comparison data remain unchanged so existing data is not deleted.
+**Legacy comparison backend retained:** the baseline/retake UI is gone, but `/api/videos`, `/api/comparisons/*`, and `data/comparisons.json` remain for historical data compatibility. New work uses sessions only.
 
-**UI styling and usability refinement remains in place:** the baseline/retake workflow still has clearer Indonesian instructions, refined video and angle cards, more readable statuses and notes, responsive spacing, and actionable upload/analysis errors. Internal comparison IDs remain in shareable URLs but are not shown in the page.
+**Review UI (B4/B5/B6):** synchronized elbow and trunk measurements, frame navigation, playback speeds, an accessible custom upload picker, and a responsive layout checked at 1440 px, 390 px, and 320 px.
+
+**Phase 4 pipeline remains active:** uploaded videos are processed frame by frame with MediaPipe Pose Landmarker and viewed as an annotated MP4. Left and right elbow angles come from the same pose inference.
+
+**Phase B2.2 metadata contract implemented:** FFmpeg decodes the source and trimmed output to collect per-frame PTS, stream properties, display rotation, and decoded frame count; a session trim is marked successful only after technical validation passes.
 
 ## Video result review
 
@@ -49,6 +53,19 @@ Use its interpreter directly (no activation is required):
 
 Open `http://127.0.0.1:8000` in a browser. The server binds only to the local machine.
 
+## Login
+
+The application is protected by a single local account. The default credentials are:
+
+- Username: `admin`
+- Password: `AdminAman123`
+
+Sign in at `/login`; every page, video, and API route requires an active session. Sessions last eight hours and are stored in an HMAC-signed `HttpOnly`, `SameSite=Lax` cookie. The signing secret is generated once into `data/.auth_secret` (ignored by Git) so sessions survive restarts.
+
+Set `MOTION_TRACKER_USERNAME`, `MOTION_TRACKER_PASSWORD`, or `MOTION_TRACKER_PASSWORD_HASH` before starting the server to override the default account. `MOTION_TRACKER_PASSWORD_HASH` accepts the output of `auth.hash_password(...)` and takes precedence over `MOTION_TRACKER_PASSWORD`. Set `MOTION_TRACKER_SECRET_KEY` to supply the signing secret explicitly, and `MOTION_TRACKER_COOKIE_SECURE=1` when the app is served over HTTPS.
+
+Passwords are stored as salted PBKDF2-HMAC-SHA256 digests (600,000 iterations) and verified with `hmac.compare_digest`. This project has no SQL database, so SQL injection has no attack surface: session and comparison metadata live in JSON files, and IDs plus generated filenames are validated before use. Login failures are throttled to five attempts per minute per client before a temporary lockout.
+
 ## Run tests
 
 ```powershell
@@ -61,11 +78,13 @@ On this Windows environment the default pytest temp root under `%LOCALAPPDATA%\T
 .\.venv\Scripts\python.exe -m pytest -q -p no:cacheprovider --basetemp .\pytest-run-temp
 ```
 
-B1 verification: the required workspace-local pytest command completed with 65 passed tests and one upstream Starlette/httpx TestClient deprecation warning. Tests cover session upload/preview, trim time validation, FFmpeg output validation, source preservation, failure metadata, ownership and restart persistence, mandatory trimming before session pose processing, trimmed-input selection, and legacy comparison behavior. An isolated browser end-to-end check uploaded and played a real MP4, trimmed a selected range with FFmpeg, processed the trimmed video with MediaPipe, and played the generated skeleton result without JavaScript errors.
+Current verification: the workspace-local command completes with 132 passed tests and one upstream Starlette/httpx `TestClient` deprecation warning. The suite includes 17 authentication tests.
+
+Historical B1 verification: the required workspace-local pytest command completed with 65 passed tests and one upstream Starlette/httpx TestClient deprecation warning. Tests cover session upload/preview, trim time validation, FFmpeg output validation, source preservation, failure metadata, ownership and restart persistence, mandatory trimming before session pose processing, trimmed-input selection, and legacy comparison behavior. An isolated browser end-to-end check uploaded and played a real MP4, trimmed a selected range with FFmpeg, processed the trimmed video with MediaPipe, and played the generated skeleton result without JavaScript errors.
 
 B2.1 technical metadata fields are defined in `video_metadata.py`. Each value carries per-field provenance (`measured`, `calculated`, `estimated`, `provided`, `policy`, or `unavailable`); unavailable measurements remain `null`. Test media is generated at runtime with the project-local `imageio-ffmpeg` binary. The VFR fixture is made by varying frame presentation timestamps with FFmpeg's `setpts` and `-fps_mode vfr`; the rotation fixture is a stream-copy MP4 with a 90-degree display rotation set through FFmpeg's `-display_rotation` input option. No binary fixtures or production videos are added or changed.
 
-B2.2 probing uses the bundled FFmpeg executable with `showinfo` and `-noautorotate`; `ffprobe` is not present in the `imageio-ffmpeg` binary directory or on PATH. `frame_count` counts every decoded `showinfo` frame record, while `valid_pts_count` counts only records with numeric PTS. Missing PTS therefore cannot silently reduce the decoded count or pass timing validation. CFR detection requires complete PTS and uses decoded PTS intervals (1 ms or 5% of median interval tolerance). `average_frame_rate` is calculated from valid PTS count and first-to-last PTS span. `nominal_frame_rate` remains null because this probe does not establish an exact stream-declared nominal rate; `inferred_cfr_frame_rate` is the separately labeled reciprocal-median-PTS estimate. For a trimmed CFR stream, `actual_output_frame_rate` records that same calculated output-timeline rate; it is null for a source probe or VFR stream.
+B2.2 probing uses the bundled FFmpeg executable with `showinfo` and `-noautorotate`; `ffprobe` is not present in the `imageio-ffmpeg` binary directory or on PATH. `frame_count` counts every decoded `showinfo` frame record, while `valid_pts_count` counts only records with numeric PTS. Missing PTS therefore cannot silently reduce the decoded count or pass timing validation. CFR detection requires complete PTS and uses decoded PTS intervals (1 ms or 5% of median interval tolerance). `average_frame_rate` is calculated from valid PTS count and first-to-last PTS span. `nominal_frame_rate` and its rational numerator/denominator are populated only for CFR streams whose FFmpeg `showinfo` stream `frame_rate` agrees with complete CFR PTS intervals; they stay null for VFR. `inferred_cfr_frame_rate` is the separately labeled reciprocal-median-PTS estimate. For a trimmed CFR stream, `actual_output_frame_rate` records that same calculated output-timeline rate; it is null for a source probe or VFR stream.
 
 The timestamp-derived duration uses the last frame's FFmpeg `duration_time` when available. If FFmpeg reports zero/unknown duration (as it does for the generated VFR fixture), the final frame duration is estimated from the median positive PTS interval and its provenance is marked `estimated`. A measured container duration is compared with timestamp duration using a 10 ms maximum tolerance for FFmpeg's centisecond-formatted duration. When the last frame duration is estimated, the comparison allows one average frame interval plus 5 ms, reflecting the unknown final VFR frame boundary; trim-range validation allows at most one frame interval plus 5 ms, rather than a fixed 100 ms floor or two-frame tolerance. These estimates are not equivalent to exact packet timing. OpenCV frame count remains a consistency cross-check, not the primary timing source.
 
@@ -79,7 +98,7 @@ The nonstandard-rate test fixture is now generated by FFmpeg's rational `24000/1
 
 B2.3.1 verification: `.venv\Scripts\python.exe -m pytest -q -p no:cacheprovider --basetemp .\pytest-run-temp` completed with 93 passed tests and one upstream Starlette/httpx `TestClient` deprecation warning. The active trim endpoint and legacy comparison flow remain unchanged.
 
-Phase B2.3.2 connects the validated target FPS resolver to session trimming. The source remains unchanged and unnormalized. The trimmed output is encoded with the resolved rational numerator/denominator through the bundled FFmpeg `fps` filter and CFR output mode. FFmpeg timestamps are reset and output is re-probed before the session is marked successful; output CFR status and rational FPS must match the resolved target. Rational values such as `24000/1001` are retained exactly rather than converted to approximate floats. If resolution or output validation fails, trimming remains failed, temporary output is removed, and the source remains available. Legacy comparisons do not use this normalization path.
+Phase B2.3.2 integrates CFR normalization into session trimming with a fixed target. The source remains unchanged and unnormalized. Every successful trim is encoded with the bundled FFmpeg `fps=30/1` filter and CFR output mode, timestamps are reset, and the output is re-probed. The endpoint requires CFR status plus a matching `30/1` rational output rate and a valid per-frame PTS cadence before the session is marked successful. Rational handling still avoids float rounding, temporary output is removed on failure, and the source stays available. The B2.3.1 `resolve_target_frame_rate` policy stays standalone and is not used by this endpoint.
 
 B2.3.2 verification: the workspace-local command `.venv\Scripts\python.exe -m pytest -q -p no:cacheprovider --basetemp .\pytest-run-temp` completed with 95 passed tests and one upstream Starlette/httpx TestClient deprecation warning.
 
@@ -91,13 +110,13 @@ Every successful session trim targets `30/1` and must pass strict per-frame PTS 
 
 ### B2.3.2 remediation
 
-Session output validation now checks every decoded frame PTS against the exact resolved numerator/denominator timeline, using the FFmpeg stream time base to account for integer PTS quantization. A dropped frame or cadence interval outside that timeline rejects the output before trim success is persisted.
+Session output validation now checks every decoded frame PTS against the exact `30/1` timeline, using the FFmpeg stream time base to account for integer PTS quantization. A dropped frame or cadence interval outside that timeline rejects the output before trim success is persisted.
 
 FFmpeg resamples source presentation timestamps with the `fps=30/1` filter for VFR and CFR outputs. Decoded timestamps are used rather than average FPS. If decoding or normalization fails, trimming returns an informative error and removes temporary output. Legacy comparison uploads and processing do not use this normalization path.
 
 ## Video upload and skeleton result
 
-Upload MP4, MOV, or WebM video up to 200 MB. The server checks the extension, rejects empty files, applies the size limit while streaming, checks a basic container signature, and saves accepted files under a generated UUID filename in `uploads/`. It never uses the supplied filename as a path. The single-session workflow previews the uploaded source before trimming and processes the trimmed result with MediaPipe afterward. The legacy comparison upload remains available under **Alur perbandingan lama**.
+Upload MP4, MOV, or WebM video up to 200 MB. The server checks the extension, rejects empty files, applies the size limit while streaming, checks a basic container signature, and saves accepted files under a generated UUID filename in `uploads/`. It never uses the supplied filename as a path. The single-session workflow previews the uploaded source before trimming and processes the trimmed result with MediaPipe afterward. The legacy comparison upload endpoint (`POST /api/videos`) still exists for compatibility but has no UI.
 
 The annotated result is played by the browser's native HTML5 player. Browser and operating-system codecs determine whether the generated H.264 video plays. Set `MOTION_TRACKER_MAX_UPLOAD_BYTES` before server startup to configure the upload limit in bytes.
 
@@ -126,13 +145,9 @@ Trimming currently runs synchronously in a FastAPI worker with a five-minute FFm
 
 Pose processing runs in FastAPI's synchronous worker thread. Keep the page open and wait for processing to finish; the server can still respond to other requests while it processes the video.
 
-## Baseline, retake, and comparison
+## Legacy comparison API (not exposed in the UI)
 
-The first upload is stored as a baseline, analyzed automatically, and displayed with its skeleton video and selected-frame elbow angles. The page link includes its `comparison_id`; reopening that URL reloads metadata from the local JSON store. Add or edit the baseline note under its result. Once baseline analysis succeeds, the retake upload card appears directly below the comparison heading so the next step is easy to find without scrolling past the result cards. Use the visible **Pilih video pengulangan** button to choose the next smash, then submit it for analysis and optionally record the change being tried. The retake is attached using the current comparison ID and is analyzed automatically. The retake upload control is disabled during submission, and the API allows only one retake per comparison. At the bottom of the comparison page, **Unggah video pengulangan** jumps back to that upload form, while **Mulai baseline baru** returns to the home page to create a separate comparison.
-
-Baseline and retake skeleton videos are presented side by side on wide screens and stacked on narrow screens. The comparison page uses the available screen width on desktop and allows taller video frames; each video has independent playback controls, so users can choose a frame in each result. The angle difference is calculated as retake minus baseline for those selected frames; increases and decreases are described as numeric changes, not as improvements or regressions. If either measurement is unavailable, the difference for that side is unavailable too. The UI explains that movement phases are not aligned, so equal timestamps do not imply equivalent smash phases.
-
-The page can be opened again with `?comparison_id=<id>` to read its metadata and results. Uploaded or in-progress attempts are resumed/polled; failed attempts show the stored error and can be retried if the source remains available. A missing video or result is reported from the comparison metadata.
+The baseline/retake interface has been removed. The endpoints and `data/comparisons.json` below remain only for historical data and backward compatibility; the session workflow is the supported path.
 
 Every successful `POST /api/videos` upload creates a comparison with a baseline attempt and returns `comparison_id`, `attempt_id`, and `role`. The optional multipart form field `note` stores an evaluation note (up to 2,000 characters). To attach a retake, include the comparison's `comparison_id` in the multipart form.
 
@@ -163,10 +178,8 @@ Install all dependencies in the existing environment:
 
 - If `python` is not found, install Python and reopen PowerShell.
 - If the browser cannot connect, ensure Uvicorn is still running and use the exact local URL above.
-- On Windows, an asyncio `ConnectionResetError` with `WinError 10054` means the browser or another client closed its connection. By itself, it does not indicate a pose-detection failure. Keep the page open while processing; if the page reports an error, check the preceding server log for the actual processing error.
+- On Windows, an asyncio `ConnectionResetError` with `WinError 10054` means the browser or another client closed its connection. By itself, it does not indicate a pose-detection failure. Keep the page open while processing. When the page shows a generic error, the persisted record in `data/sessions.json` or `data/comparisons.json` holds the stored status and message; the application does not write exception details to a log yet.
 - If a result video still cannot play, check that the browser is up to date and that its H.264 playback support is enabled.
 - Keep dependencies inside `.venv`; do not install project packages system-wide.
 
 Further development should wait for approval before starting another stage.
-#   s k e l e t o n - t r a c k e r  
- 

@@ -4,6 +4,18 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
+def test_upload_picker_uses_a_custom_accessible_control() -> None:
+    template = (PROJECT_ROOT / "templates" / "index.html").read_text(encoding="utf-8")
+    styles = (PROJECT_ROOT / "static" / "css" / "style.css").read_text(encoding="utf-8")
+
+    assert 'class="visually-hidden-file"' in template
+    assert 'id="session-upload-form" novalidate' in template
+    assert 'class="picker-button"' in template
+    assert ".file-picker input.visually-hidden-file { display: none; }" not in styles
+    assert "clip-path: inset(50%)" in styles
+    assert ".file-picker:focus-within { outline:" in styles
+
+
 def test_review_controls_offer_required_playback_rates() -> None:
     template = (PROJECT_ROOT / "templates" / "index.html").read_text(encoding="utf-8")
 

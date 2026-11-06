@@ -7,7 +7,7 @@
     <title>Motion Tracker</title>
     <link
       rel="stylesheet"
-      href="{{ url_for('static', path='css/style.css') }}?v=14"
+      href="{{ url_for('static', path='css/style.css') }}?v=16"
     />
   </head>
   <body>
@@ -18,6 +18,9 @@
             <p class="app-name">Motion Tracker</p>
             <span class="brand-divider" aria-hidden="true"></span>
             <p class="brand-description">Analisis gerakan</p>
+            <form method="post" action="/logout" class="logout-form">
+              <button type="submit" class="button-secondary logout-button">Keluar</button>
+            </form>
           </div>
           <p class="intro">
             Pilih bagian video yang ingin ditinjau sebelum analisis gerakan.
@@ -41,15 +44,17 @@
           <p class="section-copy">
             Unggah satu video, tinjau rekamannya, lalu pilih bagian yang ingin dianalisis.
           </p>
-          <form id="session-upload-form">
+          <form id="session-upload-form" novalidate>
             <label class="file-picker" for="session-video-file">
               <span class="picker-icon" aria-hidden="true">↑</span>
               <span class="picker-title">Pilih video smash</span>
               <span class="picker-hint">MP4, MOV, atau WebM · Maks. 200 MB</span>
+              <span class="picker-button" aria-hidden="true">Pilih video</span>
               <input
                 id="session-video-file"
                 name="video"
                 type="file"
+                class="visually-hidden-file"
                 accept="video/mp4,video/quicktime,video/webm,.mp4,.mov,.webm"
                 required
               />

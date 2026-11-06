@@ -1,8 +1,10 @@
 from pathlib import Path
+import os
 
 import pytest
 from fastapi.testclient import TestClient
 
+import auth
 from app import app
 from video_metadata import build_video_metadata
 from video_trimmer import VideoProbeResult, probe_video_metadata
@@ -15,18 +17,30 @@ def client(tmp_path: Path):
     original_output_directory = app.state.output_directory
     original_metadata_file = app.state.metadata_file
     original_session_file = app.state.session_file
+    original_auth_secret_file = app.state.auth_secret_file
     app.state.upload_directory = tmp_path / "uploads"
     app.state.max_upload_bytes = 200 * 1024 * 1024
     app.state.output_directory = tmp_path / "outputs"
     app.state.metadata_file = tmp_path / "data" / "comparisons.json"
     app.state.session_file = tmp_path / "data" / "sessions.json"
+    app.state.auth_secret_file = tmp_path / "data" / ".auth_secret"
     with TestClient(app) as test_client:
+        login_response = test_client.post(
+            "/login",
+            data={
+                "username": app.state.auth_username,
+                "password": os.environ.get("MOTION_TRACKER_PASSWORD", auth.DEFAULT_PASSWORD),
+            },
+            follow_redirects=False,
+        )
+        assert login_response.status_code == 303
         yield test_client
     app.state.upload_directory = original_directory
     app.state.max_upload_bytes = original_limit
     app.state.output_directory = original_output_directory
     app.state.metadata_file = original_metadata_file
     app.state.session_file = original_session_file
+    app.state.auth_secret_file = original_auth_secret_file
 
 
 def webm_bytes() -> bytes:

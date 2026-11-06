@@ -1,18 +1,22 @@
 """FastAPI entry point for the Motion Tracker MVP."""
 
 from contextlib import asynccontextmanager
+import hmac
 import os
 import tempfile
+import time
 from pathlib import Path
 from typing import Any, Final
+from urllib.parse import quote
 from uuid import uuid4
 
 from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile, status
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
 
+import auth
 from comparison_store import (
     ComparisonConflictError,
     ComparisonNotFoundError,
@@ -38,6 +42,12 @@ ALLOWED_EXTENSIONS: Final = {".mp4", ".mov", ".webm"}
 MEDIA_TYPES: Final = {".mp4": "video/mp4", ".mov": "video/quicktime", ".webm": "video/webm"}
 CHUNK_SIZE: Final = 1024 * 1024
 MIN_TRIM_DURATION_SECONDS: Final = float(os.environ.get("MOTION_TRACKER_MIN_TRIM_DURATION_SECONDS", "0.5"))
+SESSION_COOKIE_NAME: Final = "motion_tracker_session"
+PUBLIC_PATHS: Final = frozenset({"/login", "/health"})
+PUBLIC_PATH_PREFIXES: Final = ("/static/",)
+NON_HTML_PATH_PREFIXES: Final = ("/api/", "/videos/", "/outputs/")
+LOGIN_MAX_FAILURES: Final = 5
+LOGIN_FAILURE_WINDOW_SECONDS: Final = 60.0
 
 @asynccontextmanager
 async def lifespan(application: FastAPI):
@@ -53,6 +63,17 @@ async def lifespan(application: FastAPI):
     )
     application.state.comparison_store.recover_interrupted()
     application.state.session_store.recover_interrupted()
+    application.state.auth_username = os.environ.get("MOTION_TRACKER_USERNAME", auth.DEFAULT_USERNAME)
+    configured_hash = os.environ.get("MOTION_TRACKER_PASSWORD_HASH", "").strip()
+    application.state.auth_password_hash = configured_hash or auth.hash_password(
+        os.environ.get("MOTION_TRACKER_PASSWORD", auth.DEFAULT_PASSWORD)
+    )
+    application.state.auth_secret = auth.load_or_create_secret(
+        application.state.auth_secret_file,
+        environment_value=os.environ.get("MOTION_TRACKER_SECRET_KEY", "").strip() or None,
+    )
+    application.state.cookie_secure = os.environ.get("MOTION_TRACKER_COOKIE_SECURE", "0") == "1"
+    application.state.login_failures = {}
     yield
 
 
@@ -64,8 +85,61 @@ app.state.max_upload_bytes = int(os.environ.get("MOTION_TRACKER_MAX_UPLOAD_BYTES
 app.state.output_directory = BASE_DIR / "outputs"
 app.state.metadata_file = BASE_DIR / "data" / "comparisons.json"
 app.state.session_file = BASE_DIR / "data" / "sessions.json"
+app.state.auth_secret_file = BASE_DIR / "data" / ".auth_secret"
 app.state.model_path = BASE_DIR / "models" / "pose_landmarker_lite.task"
 app.state.max_video_duration_seconds = int(os.environ.get("MOTION_TRACKER_MAX_VIDEO_DURATION_SECONDS", "120"))
+
+
+def _safe_next_url(value: str | None) -> str:
+    """Allow only same-site absolute paths as post-login redirect targets."""
+    if not value or not value.startswith("/") or value.startswith("//"):
+        return "/"
+    if any(character in value for character in ("\r", "\n", "\\")):
+        return "/"
+    return value
+
+
+def _authenticated_username(request: Request) -> str | None:
+    token = request.cookies.get(SESSION_COOKIE_NAME, "")
+    secret = getattr(app.state, "auth_secret", None)
+    expected_username = getattr(app.state, "auth_username", "")
+    if not token or not secret or not expected_username:
+        return None
+    username = auth.verify_session_token(token, secret)
+    if username is None or not hmac.compare_digest(
+        username.encode("utf-8"), expected_username.encode("utf-8")
+    ):
+        return None
+    return username
+
+
+def _login_locked(client_host: str) -> bool:
+    now = time.monotonic()
+    attempts = [
+        moment
+        for moment in app.state.login_failures.get(client_host, [])
+        if now - moment < LOGIN_FAILURE_WINDOW_SECONDS
+    ]
+    app.state.login_failures[client_host] = attempts
+    return len(attempts) >= LOGIN_MAX_FAILURES
+
+
+def _record_login_failure(client_host: str) -> None:
+    attempts = app.state.login_failures.setdefault(client_host, [])
+    attempts.append(time.monotonic())
+
+
+@app.middleware("http")
+async def require_authentication(request: Request, call_next):
+    path = request.url.path
+    if path in PUBLIC_PATHS or path.startswith(PUBLIC_PATH_PREFIXES):
+        return await call_next(request)
+    if _authenticated_username(request) is not None:
+        return await call_next(request)
+    if path.startswith(NON_HTML_PATH_PREFIXES):
+        return JSONResponse({"detail": "Autentikasi diperlukan."}, status_code=401)
+    target = path + (f"?{request.url.query}" if request.url.query else "")
+    return RedirectResponse(f"/login?next={quote(target, safe='')}", status_code=303)
 
 
 class NoteUpdate(BaseModel):
@@ -160,6 +234,72 @@ def _session_http_error(error: Exception) -> HTTPException:
     if isinstance(error, ValueError):
         return HTTPException(status_code=422, detail=str(error))
     return HTTPException(status_code=500, detail="Metadata sesi analisis gagal diproses.")
+
+
+def _login_page(request: Request, next_url: str, username: str = "", error: str = "", status_code: int = 200) -> HTMLResponse:
+    return templates.TemplateResponse(
+        request=request,
+        name="login.html",
+        context={"next": next_url, "username": username, "error": error},
+        status_code=status_code,
+    )
+
+
+@app.get("/login", response_class=HTMLResponse)
+async def login_page(request: Request, next: str = Query("/", max_length=2048)) -> Response:
+    next_url = _safe_next_url(next)
+    if _authenticated_username(request) is not None:
+        return RedirectResponse(next_url, status_code=303)
+    return _login_page(request, next_url)
+
+
+@app.post("/login", response_class=HTMLResponse)
+async def login(
+    request: Request,
+    username: str = Form("", max_length=64),
+    password: str = Form("", max_length=256),
+    next: str = Form("/"),
+) -> Response:
+    next_url = _safe_next_url(next)
+    client_host = request.client.host if request.client else "unknown"
+    if _login_locked(client_host):
+        return _login_page(
+            request,
+            next_url,
+            error="Terlalu banyak percobaan masuk. Tunggu sebentar lalu coba lagi.",
+            status_code=429,
+        )
+    username_matches = hmac.compare_digest(
+        username.encode("utf-8"), app.state.auth_username.encode("utf-8")
+    )
+    password_matches = auth.verify_password(password, app.state.auth_password_hash)
+    if not (username_matches and password_matches):
+        _record_login_failure(client_host)
+        return _login_page(
+            request,
+            next_url,
+            error="Nama pengguna atau kata sandi salah.",
+            status_code=401,
+        )
+    app.state.login_failures.pop(client_host, None)
+    response = RedirectResponse(next_url, status_code=303)
+    response.set_cookie(
+        SESSION_COOKIE_NAME,
+        auth.create_session_token(app.state.auth_username, app.state.auth_secret),
+        max_age=auth.SESSION_TTL_SECONDS,
+        httponly=True,
+        samesite="lax",
+        secure=app.state.cookie_secure,
+        path="/",
+    )
+    return response
+
+
+@app.post("/logout")
+async def logout() -> RedirectResponse:
+    response = RedirectResponse("/login", status_code=303)
+    response.delete_cookie(SESSION_COOKIE_NAME, path="/")
+    return response
 
 
 @app.get("/", response_class=HTMLResponse)
