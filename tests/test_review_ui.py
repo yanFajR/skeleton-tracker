@@ -23,6 +23,19 @@ def test_review_controls_offer_required_playback_rates() -> None:
         assert f'value="{rate}"' in template
 
 
+def test_new_upload_button_resets_session_without_logging_out() -> None:
+    template = (PROJECT_ROOT / "templates" / "index.html").read_text(encoding="utf-8")
+    script = (PROJECT_ROOT / "static" / "js" / "session.js").read_text(encoding="utf-8")
+
+    assert 'id="session-new-upload"' in template
+    assert "sessionNewUploadButton.hidden = false" in script
+    assert 'sessionNewUploadButton.addEventListener("click", resetSessionWorkflow)' in script
+    assert 'url.searchParams.delete("session_id")' in script
+    assert "sessionUploadForm.hidden = false" in script
+    assert "sessionFileInput.value = \"\"" in script
+    assert 'fetch("/logout"' not in script
+
+
 def test_review_controls_uses_frame_metadata_for_synchronized_navigation() -> None:
     script = (PROJECT_ROOT / "static" / "js" / "session.js").read_text(encoding="utf-8")
 

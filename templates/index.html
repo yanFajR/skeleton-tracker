@@ -97,6 +97,9 @@
             </div>
             <p id="session-status" class="status" role="status" aria-live="polite"></p>
             <div id="session-result" class="session-preview result-preview" hidden></div>
+            <button id="session-new-upload" class="button-secondary retry-button" type="button" hidden>
+              Upload video baru
+            </button>
             <p id="session-result-loading" class="result-loading" role="status" aria-live="polite" hidden>Memuat video hasil…</p>
             <div id="session-review-controls" class="review-controls" hidden>
               <button id="session-frame-prev" class="review-button" type="button" aria-label="Frame sebelumnya">← Frame</button>
@@ -155,6 +158,6 @@
         salah.
       </p>
     </main>
-    <script src="{{ url_for('static', path='js/session.js') }}?v=2"></script>
+    <script src="{{ url_for('static', path='js/session.js') }}?v=3"></script>
   </body>
 </html>

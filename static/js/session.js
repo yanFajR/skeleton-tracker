@@ -20,6 +20,7 @@ const trimProcessing = document.querySelector("#trim-processing-status");
 const trimProcessingMessage = document.querySelector("#trim-processing-message");
 const sessionStatus = document.querySelector("#session-status");
 const sessionResult = document.querySelector("#session-result");
+const sessionNewUploadButton = document.querySelector("#session-new-upload");
 const sessionResultLoading = document.querySelector("#session-result-loading");
 const sessionReviewControls = document.querySelector("#session-review-controls");
 const sessionFramePrev = document.querySelector("#session-frame-prev");
@@ -141,6 +142,7 @@ function mountSessionResultVideo(resultUrl, sessionId) {
   configureSessionResultVideo(resultVideo);
   resultVideo.src = resultUrl;
   sessionResult.hidden = false;
+  sessionNewUploadButton.hidden = false;
   sessionResultLoading.hidden = false;
   sessionResultLoading.textContent = "Memuat video hasil…";
   sessionReviewControls.hidden = false;
@@ -148,6 +150,57 @@ function mountSessionResultVideo(resultUrl, sessionId) {
   resultVideo.playbackRate = 1;
   return resultVideo;
 }
+
+function resetSessionWorkflow() {
+  sessionLifecycleGeneration += 1;
+  resultVideoGeneration += 1;
+  for (const video of [sessionPreview, sessionResultVideo()]) {
+    if (!video) continue;
+    video.pause();
+    video.removeAttribute("src");
+    video.load();
+  }
+  sessionResult.replaceChildren();
+  sessionResult.hidden = true;
+  sessionResultLoading.hidden = true;
+  sessionNewUploadButton.hidden = true;
+  sessionReviewControls.hidden = true;
+  sessionMeasurements.hidden = true;
+  sessionTrunkMeasurement.hidden = true;
+  sessionRetryButton.hidden = true;
+  trimProcessing.hidden = true;
+  sessionUploadForm.reset();
+  sessionFileInput.value = "";
+  sessionSelectedFile.textContent = "Belum ada file dipilih.";
+  sessionUploadButton.disabled = false;
+  sessionEditor.hidden = true;
+  sessionUploadForm.hidden = false;
+  activeSession = null;
+  sourceDuration = null;
+  sessionSourceDuration.textContent = "00:00.000";
+  trimForm.reset();
+  trimStartTime.disabled = false;
+  trimEndTime.disabled = false;
+  trimStartRange.disabled = false;
+  trimEndRange.disabled = false;
+  trimStartRange.max = "0";
+  trimEndRange.max = "0";
+  trimStartTime.removeAttribute("max");
+  trimEndTime.removeAttribute("max");
+  trimStartDisplay.textContent = "00:00.000";
+  trimEndDisplay.textContent = "00:00.000";
+  trimSelectedDuration.textContent = "00:00.000";
+  trimRangeError.textContent = "";
+  trimSubmitButton.disabled = true;
+  showSessionStatus("");
+  const url = new URL(window.location.href);
+  url.searchParams.delete("session_id");
+  url.searchParams.delete("comparison_id");
+  window.history.replaceState({}, "", url);
+  sessionUploadButton.focus();
+}
+
+sessionNewUploadButton.addEventListener("click", resetSessionWorkflow);
 
 function isCurrentResultVideo(video, generation) {
   return generation === resultVideoGeneration && sessionResult.querySelector("video") === video;
