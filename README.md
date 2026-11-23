@@ -53,6 +53,28 @@ Use its interpreter directly (no activation is required):
 
 Open `http://127.0.0.1:8000` in a browser. The server binds only to the local machine.
 
+## Automatic startup and restart (Linux)
+
+After creating `.venv` and installing `requirements.txt`, install a per-user systemd service from the project folder:
+
+```bash
+bash scripts/install_systemd_user_service.sh
+```
+
+The service starts now and at future user logins. systemd restarts it five seconds after Uvicorn exits. It runs as your account and stays bound to `127.0.0.1:8000`. Follow its logs with `journalctl --user -u motion-tracker.service -f`.
+
+To start the service at system boot before you log in, enable lingering for your account (this may require administrator approval):
+
+```bash
+sudo loginctl enable-linger "$USER"
+```
+
+Remove the service with:
+
+```bash
+bash scripts/uninstall_systemd_user_service.sh
+```
+
 ## Login
 
 The application is protected by a single local account. The default credentials are:
